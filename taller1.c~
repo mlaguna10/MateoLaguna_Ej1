@@ -1,0 +1,285 @@
+#include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+double size = 512;
+int N = 90000;
+
+double *inicializar(double *matriz);
+double *relajacion(int ini, int fin, double *matriz);
+double *cargarDatos(int fin, double *matriz, double *z);
+double *actualizarFrontera(int fin,double *arreglo, double *matriz);
+void imprimir(int ini, int fin, double *matriz);
+
+void imprimir(int ini, int fin, double *matriz)
+{
+  int i,j;
+  for(i=ini+1;i<fin;j++)
+    {
+      for(j=0;j<size;j++)
+	{
+	  int k = i*size +j;
+	}
+    }
+}
+
+double *actualizarFrontera(int fin, double *arreglo, double *matriz)
+{
+  int j;
+  for(j=0;j<size;j++)
+    {
+      int k = fin*size +j;
+      matriz[k] = arreglo[j];
+    }
+  return matriz;
+}
+
+double *cargarDatos(int fin, double *matriz, double *z)
+{
+  int j;
+  for(j=0;j<size;j++)
+    {
+      int k = fin*size +j;
+      z[j] = matriz[k];
+    }
+  return z;
+}
+
+double *relajacion(int ini, int fin, double *matriz)
+{
+  int i,j;
+  for(i=ini;i<fin;i++)
+    {
+      for(j=0;j<size;j++)
+	{
+	  int k = i*size +j;
+	  if(matriz[k]==0 || matriz[k]==50 || matriz[k]==-50)
+	    {
+	      //No hace nada.
+	    }
+	  else
+	    {
+	      int k_up = (i-1)*size + j;
+	      int k_down = (i+1)*size + j;
+	      int k_next = i*size + j+1;
+	      int k_previous = i*size + j-1;
+	      matriz[k]=(matriz[k_up] + matriz[k_down] + matriz[k_next] + matriz[k_previous])/4.0;
+	    }
+	}
+    }
+  return matriz;
+}
+
+double *inicializar(double *matriz)
+{
+  int i,j;
+
+  for(i=0;i<size;i++)
+    {
+      for(j=0;j<size;j++)
+	{
+	  int k = i*size + j;
+
+	  int x_0 = 152;
+	  int y_0 = 306;
+	  int x_1 = 358;
+	  int y_1 = 204;
+
+	  if(k<512)
+	    {
+	      matriz[k]=0;
+	    }
+	  else if(k>261631)
+	    {
+	      matriz[k]=0;
+	    }
+	  else if(k%512==0)
+	    {
+	      matriz[k]=0;
+	    }
+	  else if(k%512==511)
+	    {
+	      matriz[k]=0;
+	    }
+	  else if(k > 104600 && k < 104806)
+	    {
+	      matriz[k]=50.0;
+	    }
+	  else if(k > 156824 && k < 157030)
+	    {
+	      matriz[k]=-50.0;
+	    }
+	  else
+	    {
+	      matriz[k]=1.0;
+	    }
+	}
+    }
+  return matriz;
+}
+
+int main(int argc, char** argv)
+{
+  MPI_Init(NULL, NULL);
+  int world_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+  int world_size;
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+  if (world_size%2!=0)
+    {
+      fprintf(stderr, "La cantidad de procesadores debe ser par. \n", argv[0]);
+      MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+  
+  double *matriz = malloc(100000000);
+  matriz = inicializar(matriz);
+
+  int i,j,ini,fin,z;
+  int kappa = size/world_size;
+  int betta = 16/world_size;
+
+  //Iteraciones de la ecuacion.
+  for(z=0;z<N;z++)
+    {
+      if(z%10000==0)
+	printf("%d \n",z);
+      ini = (world_rank*32*betta) - 1;
+      fin = (world_rank*32*betta) + kappa;
+
+      if(ini==-1)
+	{
+	  ini=0;
+	}
+      if(fin==512)
+	{
+	  fin=511;
+	}
+      matriz = relajacion(ini+1,fin-1,matriz);
+     
+      //Intercambio de informacion.
+      double *r;
+      r = (double *) malloc(1000000);
+      double *f; 
+      f = (double *) malloc(1000000);
+      double *q;
+      q = (double *) malloc(1000000);
+      double *t;
+      t = (double *) malloc(1000000);
+
+
+      if(world_rank == 0)
+	{
+	  f = cargarDatos(fin-1,matriz,f);
+	  int w;
+	  for(w=0;w<512;w++)
+	    {
+	      MPI_Send(&f[w], 1, MPI_DOUBLE,world_rank+1, 0, MPI_COMM_WORLD);
+	    }
+	  for(w=0;w<512;w++)
+	    {
+	      MPI_Recv(&r[w], 1, MPI_DOUBLE,world_rank+1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    }
+	  matriz = actualizarFrontera(fin,r,matriz);
+	}
+      else if(world_rank == world_size-1)
+	{
+	  f = cargarDatos(ini+1,matriz,f);
+	  int w;
+          for(w=0;w<512;w++)
+            {
+              MPI_Send(&f[w], 1, MPI_DOUBLE,world_rank-1, 0, MPI_COMM_WORLD);
+	    }
+          for(w=0;w<512;w++)
+            {
+	      MPI_Recv(&r[w], 1, MPI_DOUBLE,world_rank-1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    }
+
+	  matriz = actualizarFrontera(ini,r,matriz);
+	}
+      else
+	{
+	  f = cargarDatos(ini+1,matriz,f);
+	  int w;
+          for(w=0;w<512;w++)
+            {
+              MPI_Send(&f[w], 1, MPI_DOUBLE,world_rank-1, 0, MPI_COMM_WORLD);
+            }
+
+	  t = cargarDatos(fin-1,matriz,t);
+          for(w=0;w<512;w++)
+            {
+	      MPI_Send(&t[w], 1, MPI_DOUBLE,world_rank+1, 0, MPI_COMM_WORLD);
+            }
+	  	  
+	  for(w=0;w<512;w++)
+            {
+              MPI_Recv(&r[w], 1, MPI_DOUBLE,world_rank-1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+	  matriz=actualizarFrontera(ini,r,matriz);
+	  for(w=0;w<512;w++)
+            {
+              MPI_Recv(&q[w], 1, MPI_DOUBLE,world_rank+1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+	  matriz=actualizarFrontera(fin,q,matriz);
+	}
+    }
+  
+ 
+  //impresion de datos
+  if(world_rank==0)
+    {
+      int s;
+      s=1;
+      for(i=0;i<512;i++)
+	{
+	  printf("0 \n");
+	}                                                                                                                                     
+      for(i=ini+1;i<fin;i++)
+	{      
+	  for(j=0;j<size;j++)
+	    {
+	      int k = i*size +j;
+	      printf("%f \n",matriz[k]);
+	    }
+	}
+
+      MPI_Send(&s, 1, MPI_INT,world_rank+1, 0, MPI_COMM_WORLD);
+    }
+  else if(world_rank==world_size-1)
+    {
+      int j;
+      MPI_Recv(&j, 1, MPI_INT,world_rank-1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      for(i=ini+1;i<fin;i++)
+        {
+          for(j=0;j<size;j++)
+            {
+              int k = i*size +j;
+              printf("%f \n",matriz[k]);
+            }
+        }
+      for(i=0;i<512;i++)
+	{
+	  printf("0 \n");
+	}
+    }
+  else
+    {
+      int j;
+      MPI_Recv(&j, 1, MPI_INT,world_rank-1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      for(i=ini+1;i<fin;i++)
+        {
+          for(j=0;j<size;j++)
+            {
+              int k = i*size +j;
+              printf("%f \n",matriz[k]);
+            }
+        }
+      int k;
+      k=1;
+      MPI_Send(&k, 1, MPI_INT,world_rank+1, 0, MPI_COMM_WORLD);    
+    }
+  
+  MPI_Finalize();
+  return 0;
+}
